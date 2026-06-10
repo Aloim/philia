@@ -39,6 +39,17 @@
   header .chip { font-size:11px; padding:3px 9px; border-radius:999px; background:#0d0d0d; border:1px solid var(--line);
     display:inline-flex; align-items:center; gap:6px; }
   header .chip .on { color:var(--muted); font-size:10px; }
+  header #killbtn { display:none; margin-left:8px; background:#3a1414; color:#ff8d8d; border:1px solid #5a1f1f;
+    border-radius:7px; font:inherit; font-size:11px; font-weight:700; padding:5px 11px; cursor:pointer; white-space:nowrap; }
+  header #killbtn:hover { background:#5a1f1f; color:#ffbcbc; }
+  header #killbtn:disabled { opacity:.6; cursor:default; }
+
+  /* session-ended overlay (shown to everyone after the host stops it) */
+  #killed { position:fixed; inset:0; display:none; align-items:center; justify-content:center; z-index:20;
+    background:rgba(8,8,8,.93); text-align:center; padding:24px; }
+  #killed .box { max-width:420px; }
+  #killed h2 { color:#ff8d8d; margin:0 0 10px; font-size:20px; }
+  #killed p { color:var(--muted); font-size:13px; margin:0; line-height:1.5; }
 
   /* tab bar */
   #tabbar { display:flex; align-items:stretch; gap:4px; padding:6px 8px 0; background:var(--panel);
@@ -102,6 +113,7 @@
       <span class="dot"></span>
       <span class="title"><b>collabterm</b> · shared terminals</span>
       <span class="users" id="users"></span>
+      <button id="killbtn" title="Stop the session for everyone and kill all terminals">Stop session</button>
     </header>
     <div id="tabbar">
       <button id="addtab" title="New terminal tab">+</button>
@@ -123,11 +135,18 @@
     </main>
   </div>
 
+  <div id="killed"><div class="box">
+    <h2>Session ended</h2>
+    <p>The host stopped this collabterm session. All shared terminals and the public
+       link have been shut down.</p>
+  </div></div>
+
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
 <script>
 (function(){
   var $ = function(id){ return document.getElementById(id); };
   var ws = null, term = null;
+  var ADMIN = new URLSearchParams(location.search).get('admin') || '';
   var me = { name:'—', color:'#e6e6e6' };
   var tabs = [];            // [{id, title}]
   var buffers = {};         // id -> scrollback string (kept so switching is instant)
@@ -148,7 +167,8 @@
     showErr('connecting…');
     var proto = location.protocol === 'https:' ? 'wss' : 'ws';
     var url = proto + '://' + location.host + '/?key=' + encodeURIComponent(pw) +
-              (nm ? '&name=' + encodeURIComponent(nm) : '');
+              (nm ? '&name=' + encodeURIComponent(nm) : '') +
+              (ADMIN ? '&admin=' + encodeURIComponent(ADMIN) : '');
     ws = new WebSocket(url);
     var opened = false;
     ws.onopen = function(){ opened = true; };
@@ -175,6 +195,7 @@
     else if(m.type === 'chat'){ addChat(m.name, m.color, m.text); }
     else if(m.type === 'sys'){ sys(m.text); }
     else if(m.type === 'users'){ users = m.users; renderUsers(); renderTabs(); }
+    else if(m.type === 'killed'){ sessionEnded(); }
   }
 
   function startApp(m){
@@ -220,6 +241,11 @@
     });
 
     $('addtab').addEventListener('click', function(){ send({type:'tab-new'}); });
+    if(me.isHost){
+      var kb = $('killbtn');
+      kb.style.display = 'inline-block';
+      kb.addEventListener('click', confirmKill);
+    }
     $('chatsend').addEventListener('click', sendChat);
     $('chatinput').addEventListener('keydown', function(e){ if(e.key==='Enter') sendChat(); });
     $('rename').addEventListener('click', doRename);
@@ -327,6 +353,23 @@
     $('newname').value = '';
   }
 
+  // host-only: stop the whole session (kills every terminal + the public link)
+  function confirmKill(){
+    var ok = window.confirm(
+      'Stop the session for everyone?\n\n' +
+      'This kills every shared terminal (and whatever is running in them, like ' +
+      'Claude Code) and shuts down the public link. It cannot be undone.');
+    if(!ok) return;
+    $('killbtn').disabled = true;
+    $('killbtn').textContent = 'Stopping…';
+    send({type:'kill-all'});
+  }
+  function sessionEnded(){
+    try { if(ws) ws.close(); } catch(e){}
+    if(term){ try { term.dispose(); } catch(e){} }
+    $('killed').style.display = 'flex';
+  }
+
   function addChat(name, color, text){
     var log = $('chatlog');
     var d = document.createElement('div');
@@ -348,6 +391,7 @@
       var nm = document.createElement('span'); nm.textContent = u.name; s.appendChild(nm);
       var t = tabFor(u.tab);
       if(t){ var on = document.createElement('span'); on.className='on'; on.textContent = '· ' + t.title; s.appendChild(on); }
+      if(u.host){ var h = document.createElement('span'); h.className='on'; h.textContent = '· host'; s.appendChild(h); }
       box.appendChild(s);
     });
   }

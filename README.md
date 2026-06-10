@@ -28,8 +28,8 @@ your real Windows environment with your files and tools.
 
 | Script | What it does |
 |--------|--------------|
-| `share-claude.bat` | A single web terminal (via [ttyd]) opened in your project folder. Good for a quick 1:1 share. |
-| `share-collab.bat` | A multi-user collaborative terminal with tabs and a chat sidebar (small Node server in `collab/`). Everyone sees and controls the same terminals, which is best for group vibecoding. |
+| **`launch-collabterm.bat`** | **The main launcher.** A multi-user collaborative terminal with tabs and a chat sidebar (small Node server in `collab/`). Everyone sees and controls the same terminals, which is best for group vibecoding. This is the one to run if you're not sure. |
+| `share-claude.bat` | A simpler single web terminal (via [ttyd]) opened in your project folder. Good for a quick 1:1 share. |
 
 ## Security: read this first
 
@@ -39,13 +39,18 @@ reach. Treat the link and password like a remote-desktop password:
 
 - Only share with people you trust, over a private channel.
 - A fresh random password is generated each run and printed in the window.
-- Closing the window immediately tears down the tunnel and terminals.
+- A host-only **Stop session** button (and pressing Enter, or closing the window) instantly
+  tears down every collabterm process: terminals, the Node server, and the public tunnel.
+- All the pieces are linked, so if any one stops the rest stop too - a forgotten or
+  force-closed window can't leave a tunnel publicly reachable in the background.
+- A topmost "collabterm live" indicator stays on the host's screen for the whole session,
+  so an open session is hard to forget about.
 - The tunnel URL is public, so the password is the only thing protecting it.
 
 ## Requirements
 
 - Windows 10/11 with PowerShell.
-- Collaborative mode (`share-collab.bat`) also needs [Node.js] on your `PATH`.
+- Collaborative mode (`launch-collabterm.bat`) also needs [Node.js] on your `PATH`.
 - `ttyd` and `cloudflared` are downloaded automatically on first run into `tools/`.
 - Recommended: [Windows Terminal] as your host-side terminal for launching and watching
   sessions.
@@ -58,28 +63,54 @@ reach. Treat the link and password like a remote-desktop password:
    ```
 2. Drop the scripts into the folder you want to share, or run them in place to share the
    collabterm folder itself.
-3. Run one of the launchers:
+3. Run a launcher. For the collaborative terminal (the usual choice):
+
+   ```bat
+   launch-collabterm.bat
+   launch-collabterm.bat -Project "C:\some\path"   :: shares a different folder
+   ```
+
+   Or, for the simpler single-user terminal:
 
    ```bat
    share-claude.bat                  :: shares this script's folder
    share-claude.bat "C:\some\path"   :: shares a different folder
    ```
 
-   ```bat
-   share-collab.bat
-   share-collab.bat -Project "C:\some\path"
-   ```
-
 The window prints a `https://<random>.trycloudflare.com` link and a password. Send both to
-your collaborators and keep the window open; closing it stops the session.
+your collaborators and keep the window open.
+
+The host window also prints a **host-only `http://localhost:...?admin=...` URL**. Open that
+on the host PC to join with a red **Stop session** button that kills the whole session
+(every shared terminal plus the public link) for everyone. That admin link is shown only in
+the host window and must not be shared. Stopping the session any way - the button, pressing
+Enter, or just closing the host window - tears down every collabterm process together, so a
+forgotten window can't leave a tunnel publicly reachable.
+
+While a session is live, a small always-on-top **red dot labelled "collabterm live"** sits in
+the top-right corner of the host's screen. It stays visible even when every window is
+minimized, so you can't lose track of an open, accessible session, and it disappears the
+moment the session stops.
 
 ### Pin a fixed password (optional)
 
 Set `SHARE_PASSWORD` before launching to reuse the same password instead of a random one:
 
 ```powershell
-$env:SHARE_PASSWORD = 'My-Long-Shared-Secret'; .\share-collab.bat
+$env:SHARE_PASSWORD = 'My-Long-Shared-Secret'; .\launch-collabterm.bat
 ```
+
+## Tailoring it to your agent
+
+Out of the box collabterm is set up around **Claude Code** as the agent you share, but
+nothing is locked to it. Each shared tab is just a shell (PowerShell by default), so you can
+run **any** CLI agent or tool in it - Codex, Aider, a REPL, plain PowerShell, whatever - by
+typing its command in the tab once you're connected.
+
+To change the default more permanently, edit `collab/server.js`: the `SHELL` / `SHELL_ARGS`
+values (driven by the `SHARE_SHELL` env var) decide what each new tab launches. Point that at
+a different shell, or have it start your agent directly, and every tab opens straight into
+your setup. The collaboration, chat, tabs, auth, and shutdown logic are all agent-agnostic.
 
 ## How it works
 

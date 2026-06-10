@@ -25,6 +25,12 @@ if (-not $Password) {
 $PASSWORD = $Password
 $PROJECT  = $Project   # defaults to this script's folder (see -Project param)
 
+# Host-only kill switch. A secret known ONLY to this local host window: the host
+# opens the admin URL below (on this PC) to get an in-browser "Stop session"
+# button. It is never shown over the tunnel and never written to link.txt.
+$AdminToken = ([guid]::NewGuid().ToString('N')) + ([guid]::NewGuid().ToString('N'))
+$adminUrl   = "http://localhost:$PORT/?admin=$AdminToken"
+
 New-Item -ItemType Directory -Force -Path $tools | Out-Null
 
 # --- cloudflared (host-side; remote users install NOTHING) ---
@@ -49,20 +55,82 @@ Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -Err
 Start-Sleep 1
 Remove-Item $cflog,$cferr -ErrorAction SilentlyContinue
 
+# --- job object so EVERYTHING dies with this window (kill-on-close) ---------
+# Whatever we assign to this job (the node server, cloudflared, and the child
+# shells node spawns) is killed by Windows the instant this host window goes
+# away - even a forced close - so a closed window can never leave an orphaned
+# public tunnel running and accessible.
+$job = [IntPtr]::Zero
+try {
+  if (-not ('Win32Job' -as [type])) {
+    Add-Type -ErrorAction Stop -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class Win32Job {
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern IntPtr CreateJobObject(IntPtr a, string n);
+  [DllImport("kernel32.dll")] static extern bool SetInformationJobObject(IntPtr j, int c, IntPtr i, uint l);
+  [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr j, IntPtr p);
+  [StructLayout(LayoutKind.Sequential)] struct BASIC {
+    public long PerProcessUserTimeLimit; public long PerJobUserTimeLimit; public uint LimitFlags;
+    public UIntPtr MinWorkingSet; public UIntPtr MaxWorkingSet; public uint ActiveProcessLimit;
+    public UIntPtr Affinity; public uint PriorityClass; public uint SchedulingClass; }
+  [StructLayout(LayoutKind.Sequential)] struct IOC {
+    public ulong a; public ulong b; public ulong c; public ulong d; public ulong e; public ulong f; }
+  [StructLayout(LayoutKind.Sequential)] struct EXT {
+    public BASIC Basic; public IOC Io; public UIntPtr ProcMem; public UIntPtr JobMem;
+    public UIntPtr PeakProcMem; public UIntPtr PeakJobMem; }
+  public static IntPtr Create() {
+    IntPtr j = CreateJobObject(IntPtr.Zero, null);
+    if (j == IntPtr.Zero) return IntPtr.Zero;
+    var e = new EXT(); e.Basic.LimitFlags = 0x2000; // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    int len = Marshal.SizeOf(e); IntPtr p = Marshal.AllocHGlobal(len);
+    Marshal.StructureToPtr(e, p, false);
+    bool ok = SetInformationJobObject(j, 9, p, (uint)len); // JobObjectExtendedLimitInformation
+    Marshal.FreeHGlobal(p);
+    return ok ? j : IntPtr.Zero;
+  }
+  public static bool Assign(IntPtr j, int pid) {
+    return AssignProcessToJobObject(j, System.Diagnostics.Process.GetProcessById(pid).Handle);
+  }
+}
+'@
+  }
+  $job = [Win32Job]::Create()
+} catch { $job = [IntPtr]::Zero }
+
 # --- start the collaborative terminal server ---
-$env:PORT           = "$PORT"
-$env:SHARE_PASSWORD = $PASSWORD
-$env:SHARE_CWD      = $PROJECT
+$env:PORT              = "$PORT"
+$env:SHARE_PASSWORD    = $PASSWORD
+$env:SHARE_CWD         = $PROJECT
+$env:SHARE_ADMIN_TOKEN = $AdminToken
 $nodeProc = Start-Process -FilePath 'node' -ArgumentList ('"' + (Join-Path $collab 'server.js') + '"') `
   -WindowStyle Minimized -PassThru `
   -RedirectStandardOutput (Join-Path $collab 'server.out.log') `
   -RedirectStandardError  (Join-Path $collab 'server.err.log')
+# Tie the server (and every shell it later spawns) to the kill-on-close job.
+if ($job -ne [IntPtr]::Zero -and $nodeProc) { try { [Win32Job]::Assign($job, $nodeProc.Id) | Out-Null } catch {} }
 Start-Sleep 2
 
 # --- public tunnel ---
 $cfProc = Start-Process -FilePath $cfd -WindowStyle Minimized -PassThru `
   -ArgumentList @('tunnel','--url',"http://localhost:$PORT") `
   -RedirectStandardOutput $cflog -RedirectStandardError $cferr
+# Tie the tunnel to the same kill-on-close job.
+if ($job -ne [IntPtr]::Zero -and $cfProc) { try { [Win32Job]::Assign($job, $cfProc.Id) | Out-Null } catch {} }
+
+# --- always-on-top "collabterm live" indicator (host awareness) ------------
+# A topmost red dot in the top-right of the screen so the host can't lose track
+# of an open session, even with every window minimized. Tied to the same job,
+# so it shows for exactly as long as the session is live.
+$ovProc = $null
+$overlayScript = Join-Path $root 'collab-overlay.ps1'
+if (Test-Path $overlayScript) {
+  try {
+    $ovProc = Start-Process -FilePath 'powershell' -WindowStyle Hidden -PassThru -ArgumentList @(
+      '-NoProfile','-ExecutionPolicy','Bypass','-File',$overlayScript,'-HostPid',$PID)
+    if ($job -ne [IntPtr]::Zero -and $ovProc) { try { [Win32Job]::Assign($job, $ovProc.Id) | Out-Null } catch {} }
+  } catch {}
+}
 
 # --- read the public link (shared read so the file lock can't block us) ---
 function Read-Shared($p){ try { $fs=[IO.File]::Open($p,'Open','Read','ReadWrite'); $sr=New-Object IO.StreamReader($fs); $t=$sr.ReadToEnd(); $sr.Close(); $fs.Close(); return $t } catch { return '' } }
@@ -93,11 +161,40 @@ if ($link) {
 }
 Write-Host '=================================================================='
 Write-Host ''
+Write-Host '   HOST CONTROLS (this PC only - do NOT share this link):'
+Write-Host "       $adminUrl"
+Write-Host '   Open it on this PC, enter the password, and you get a red'
+Write-Host '   "Stop session" button that kills the WHOLE session for everyone.'
+Write-Host ''
 Write-Host '   This grants FULL control of Claude on this PC (your files and'
 Write-Host '   anything you are signed into) to everyone with the link + password.'
-Write-Host '   KEEP THIS WINDOW OPEN. Press Enter to STOP sharing.'
-Read-Host | Out-Null
+Write-Host '   KEEP THIS WINDOW OPEN. Press Enter here (or click "Stop session"'
+Write-Host '   in the host tab) to STOP sharing.'
+Write-Host '=================================================================='
 
-# --- clean up only what we started (and its child shells) ---
-if ($cfProc)   { try { Stop-Process -Id $cfProc.Id -Force -ErrorAction SilentlyContinue } catch {} }
-if ($nodeProc) { cmd /c "taskkill /F /T /PID $($nodeProc.Id)" > $null 2>&1 }
+# --- linked shutdown: stop everything if ANY piece stops -------------------
+# Wait until the host presses Enter, OR the node server exits (e.g. the
+# in-browser "Stop session" button), OR the tunnel dies. Whichever happens
+# first, we tear down the rest so nothing is left running or publicly exposed.
+# The job object above is the backstop for a hard window close.
+$reason = $null
+while (-not $reason) {
+  if ($nodeProc.HasExited) { $reason = 'the terminal server stopped'; break }
+  if ($cfProc.HasExited)   { $reason = 'the tunnel stopped';          break }
+  try {
+    if ([Console]::KeyAvailable) {
+      $k = [Console]::ReadKey($true)
+      if ($k.Key -eq 'Enter') { $reason = 'you pressed Enter'; break }
+    }
+  } catch { Read-Host | Out-Null; $reason = 'you pressed Enter'; break }
+  Start-Sleep -Milliseconds 300
+}
+
+Write-Host ''
+Write-Host "Stopping session ($reason)..."
+
+# --- clean up everything we started (and its child shells/agents) ---
+if ($ovProc   -and -not $ovProc.HasExited)   { try { Stop-Process -Id $ovProc.Id -Force -ErrorAction SilentlyContinue } catch {} }
+if ($cfProc   -and -not $cfProc.HasExited)   { try { Stop-Process -Id $cfProc.Id -Force -ErrorAction SilentlyContinue } catch {} }
+if ($nodeProc -and -not $nodeProc.HasExited) { cmd /c "taskkill /F /T /PID $($nodeProc.Id)" > $null 2>&1 }
+Write-Host 'Session stopped. You can close this window.'

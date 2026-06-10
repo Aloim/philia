@@ -18,6 +18,10 @@ catch (e) { console.error('FATAL: ws not installed. Run npm install here.'); pro
 
 const PORT     = parseInt(process.env.PORT || '7681', 10);
 const PASSWORD = process.env.SHARE_PASSWORD || 'changeme';
+// Host-only kill switch. The launcher generates this and prints it ONLY in the
+// local host console (never over the tunnel); a WS that presents ?admin=<token>
+// matching it is treated as the host and may stop the whole session.
+const ADMIN_TOKEN = process.env.SHARE_ADMIN_TOKEN || '';
 const CWD      = process.env.SHARE_CWD || process.cwd();
 const SHELL    = process.env.SHARE_SHELL || 'powershell.exe';
 const COLS = 120, ROWS = 32;
@@ -29,6 +33,7 @@ const SHELL_LABEL = path.basename(SHELL, path.extname(SHELL)).replace(/^powershe
 
 // ---------- shared terminal tabs ----------
 let tabSeq = 0;
+let shuttingDown = false;
 const tabs = new Map(); // id -> { id, title, term, scrollback }
 
 function createTab() {
@@ -44,6 +49,7 @@ function createTab() {
     broadcast({ type: 'out', tab: id, data: d });
   });
   tab.term.onExit(() => {
+    if (shuttingDown) return;          // whole session is being torn down; don't respawn
     if (!tabs.has(id)) return;
     tabs.delete(id);
     broadcast({ type: 'sys', text: `— tab "${tab.title}" exited —` });
@@ -55,7 +61,22 @@ function createTab() {
 
 function tabList() { return [...tabs.values()].map(t => ({ id: t.id, title: t.title })); }
 function broadcastTabs() { broadcast({ type: 'tabs', tabs: tabList() }); }
-createTab();
+// The first tab is created lazily on the first client connect (see upgrade
+// handler) so every pty we spawn is already inside the launcher's kill-on-close
+// job object, and nothing is running before anyone is actually watching.
+
+// Stop the whole session: kill every shared terminal (and the shells/agents
+// running in them), then exit. The launcher supervises this process and, when it
+// sees us exit, also stops the public tunnel - so one stop closes everything.
+function shutdown(reason) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log('shutting down: ' + reason);
+  for (const t of tabs.values()) { try { if (t.term) t.term.kill(); } catch (e) {} }
+  setTimeout(() => process.exit(0), 300); // let final WS frames flush first
+}
+process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // ---------- http: serve the single page ----------
 const INDEX = path.join(__dirname, 'public', 'index.html');
@@ -81,7 +102,7 @@ const COLORS= ['#d97757','#9ec07c','#7aa2c9','#e0c285','#c08fc0','#7fc0bf','#e89
 function autoName(i){ return ADJ[i % ADJ.length] + NOUN[(i * 7) % NOUN.length]; }
 
 function broadcast(msg){ const s = JSON.stringify(msg); for (const ws of clients.keys()) if (ws.readyState === 1) ws.send(s); }
-function roster(){ return [...clients.values()].map(c => ({ name: c.name, color: c.color, tab: c.tab })); }
+function roster(){ return [...clients.values()].map(c => ({ name: c.name, color: c.color, tab: c.tab, host: !!c.isHost })); }
 
 server.on('upgrade', (req, socket, head) => {
   let url; try { url = new URL(req.url, 'http://localhost'); } catch { socket.destroy(); return; }
@@ -91,11 +112,14 @@ server.on('upgrade', (req, socket, head) => {
     const reqName = (url.searchParams.get('name') || '').trim().slice(0, 24);
     const name = reqName || autoName(idx);
     const color = COLORS[idx % COLORS.length];
+    // Host = presented the matching admin token (only the local host console has it).
+    const isHost = !!ADMIN_TOKEN && url.searchParams.get('admin') === ADMIN_TOKEN;
+    if (tabs.size === 0) createTab();   // spawn the first terminal on demand
     const firstTab = tabs.keys().next().value;
-    clients.set(ws, { name, color, tab: firstTab });
+    clients.set(ws, { name, color, tab: firstTab, isHost });
 
     ws.send(JSON.stringify({
-      type: 'init', you: { name, color }, users: roster(), cols: COLS, rows: ROWS,
+      type: 'init', you: { name, color, isHost }, users: roster(), cols: COLS, rows: ROWS,
       tabs: [...tabs.values()].map(t => ({ id: t.id, title: t.title, scrollback: t.scrollback })),
     }));
     broadcast({ type: 'sys', text: `${name} joined` });
@@ -118,6 +142,12 @@ server.on('upgrade', (req, socket, head) => {
       else if (m.type === 'tab-close') {
         const t = tabs.get(m.tab);
         if (t) { broadcast({ type: 'sys', text: `${c.name} closed tab "${t.title}"` }); t.term.kill(); }
+      }
+      else if (m.type === 'kill-all') {
+        if (!c.isHost) return;          // enforced server-side: only the host may stop the session
+        broadcast({ type: 'sys', text: `— ${c.name} (host) stopped the session —` });
+        broadcast({ type: 'killed', by: c.name });
+        shutdown(`kill-all from host ${c.name}`);
       }
       else if (m.type === 'tab-rename') {
         const t = tabs.get(m.tab);
