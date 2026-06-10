@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Collaborative web terminal with tabs and chat, shared over a Cloudflare tunnel.",
   "private": true,
+  "license": "PolyForm-Noncommercial-1.0.0",
   "dependencies": {
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
     "ws": "^8.21.0"

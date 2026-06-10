@@ -1,7 +1,7 @@
 # Always-on-top "collabterm live" indicator for the HOST.
 # A small, click-through, topmost pill in the top-right corner of the primary
 # screen, so the host always knows a session is live - even with every window
-# minimized. start-collab.ps1 launches this hidden and ties it to the same
+# minimized. _collabterm.ps1 launches this hidden and ties it to the same
 # kill-on-close job, so it shows for exactly as long as the session is live.
 #
 # -HostPid lets the overlay self-close if the launcher process disappears, as a

@@ -134,8 +134,19 @@ if (Test-Path $overlayScript) {
 
 # --- read the public link (shared read so the file lock can't block us) ---
 function Read-Shared($p){ try { $fs=[IO.File]::Open($p,'Open','Read','ReadWrite'); $sr=New-Object IO.StreamReader($fs); $t=$sr.ReadToEnd(); $sr.Close(); $fs.Close(); return $t } catch { return '' } }
+
+# Show a clear "loading" screen with a spinner while cloudflared spins up and we
+# wait for it to hand us a public link, so the host window never looks frozen or
+# blank during the few seconds before the link and password are ready to share.
+Clear-Host
+Write-Host '=================================================================='
+Write-Host '   COLLABORATIVE CLAUDE SESSION'
+Write-Host '=================================================================='
+Write-Host ''
+$spin = '|','/','-','\'
 $link = $null
 for ($i=0; $i -lt 45 -and -not $link; $i++) {
+  Write-Host ("`r   Loading - waiting for the public link...  {0} " -f $spin[$i % $spin.Count]) -NoNewline
   Start-Sleep 1
   foreach ($f in @($cflog,$cferr)) { $m=[regex]::Match((Read-Shared $f),'https://[a-z0-9.-]+\.trycloudflare\.com'); if($m.Success){ $link=$m.Value; break } }
 }

@@ -29,7 +29,7 @@ your real Windows environment with your files and tools.
 | Script | What it does |
 |--------|--------------|
 | **`launch-collabterm.bat`** | **The main launcher.** A multi-user collaborative terminal with tabs and a chat sidebar (small Node server in `collab/`). Everyone sees and controls the same terminals, which is best for group vibecoding. This is the one to run if you're not sure. |
-| `share-claude.bat` | A simpler single web terminal (via [ttyd]) opened in your project folder. Good for a quick 1:1 share. |
+| `launch-simple.bat` | A simpler single web terminal (via [ttyd]) opened in your project folder. Good for a quick 1:1 share. |
 
 ## Security: read this first
 
@@ -73,8 +73,8 @@ reach. Treat the link and password like a remote-desktop password:
    Or, for the simpler single-user terminal:
 
    ```bat
-   share-claude.bat                  :: shares this script's folder
-   share-claude.bat "C:\some\path"   :: shares a different folder
+   launch-simple.bat                  :: shares this script's folder
+   launch-simple.bat "C:\some\path"   :: shares a different folder
    ```
 
 The window prints a `https://<random>.trycloudflare.com` link and a password. Send both to
@@ -122,6 +122,13 @@ your setup. The collaboration, chat, tabs, auth, and shutdown logic are all agen
 
 Nothing is hard-coded to a specific machine: the shared folder defaults to wherever the
 scripts live, and the password is generated per run.
+
+## License
+
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). You're free to use,
+copy, modify, and share it for any **noncommercial** purpose - personal projects, hobby and
+amateur use, research, education, and nonprofit or government use. **Commercial use is not
+permitted** under this license. If you need a commercial license, open an issue to ask.
 
 [ttyd]: https://github.com/tsl0922/ttyd
 [Cloudflare]: https://github.com/cloudflare/cloudflared

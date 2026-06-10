@@ -52,8 +52,10 @@
   #killed p { color:var(--muted); font-size:13px; margin:0; line-height:1.5; }
 
   /* tab bar */
+  /* overflow-x:auto would make overflow-y compute to auto too, adding a stray
+     vertical scrollbar (the tabs sit 1px proud of the bar); pin it to hidden. */
   #tabbar { display:flex; align-items:stretch; gap:4px; padding:6px 8px 0; background:var(--panel);
-    border-bottom:1px solid var(--line); overflow-x:auto; }
+    border-bottom:1px solid var(--line); overflow-x:auto; overflow-y:hidden; }
   #tabbar .tab { display:inline-flex; align-items:center; gap:8px; padding:7px 10px 7px 12px; cursor:pointer;
     background:#0d0d0d; border:1px solid var(--line); border-bottom:none; border-radius:8px 8px 0 0;
     color:var(--muted); font-size:12px; white-space:nowrap; position:relative; top:1px; transition:color .12s, background .12s; }

@@ -8,7 +8,7 @@ set "GUSER=guest"
 
 REM ---- which folder to share (defaults to this script's own folder) ----
 REM Pass a path as the first argument to share a different folder, e.g.:
-REM     share-claude.bat "C:\path\to\my project"
+REM     launch-simple.bat "C:\path\to\my project"
 set "PROJECT=%~1"
 if not defined PROJECT set "PROJECT=%~dp0"
 if "%PROJECT:~-1%"=="\" set "PROJECT=%PROJECT:~0,-1%"
@@ -42,7 +42,7 @@ taskkill /f /im ttyd.exe >nul 2>&1
 taskkill /f /im cloudflared.exe >nul 2>&1
 
 REM ---- start the writable web terminal, launching Claude Code in the project ----
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-ttyd.ps1" -Ttyd "%TTYD%" -Port "%PORT%" -Cred "%GUSER%:%GPASS%" -Cwd "%PROJECT%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0_simple-terminal.ps1" -Ttyd "%TTYD%" -Port "%PORT%" -Cred "%GUSER%:%GPASS%" -Cwd "%PROJECT%"
 
 REM ---- start the public tunnel, capturing its output so we can read the link ----
 del "%CFLOG%" >nul 2>&1
