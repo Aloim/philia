@@ -1,0 +1,9 @@
+# Auto-downloaded host-side binaries + their logs (ttyd.exe, cloudflared.exe, *.log)
+/tools/
+
+# Auto-installed Node dependencies (re-created by `npm install` on first run)
+/collab/node_modules/
+
+# Runtime artifacts, regenerated on every run
+/link.txt
+*.log

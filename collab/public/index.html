@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>collabterm — shared session</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>
+  :root { --bg:#0d0d0d; --panel:#161616; --line:#2a2a2a; --fg:#e6e6e6; --muted:#8a8a8a; --accent:#d97757; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font-family:'Cascadia Code','Cascadia Mono',Consolas,ui-monospace,monospace; }
+
+  /* login gate */
+  #login { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(1200px 600px at 50% -10%, #1b1b1b, #0d0d0d); z-index:10; }
+  #login .card { width:340px; background:var(--panel); border:1px solid var(--line); border-radius:14px;
+    padding:26px 24px; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  #login h1 { margin:0 0 4px; font-size:18px; }
+  #login h1 b { color:var(--accent); }
+  #login p { margin:0 0 18px; color:var(--muted); font-size:12px; }
+  #login label { display:block; font-size:11px; color:var(--muted); margin:12px 0 5px; letter-spacing:.04em; text-transform:uppercase; }
+  #login input { width:100%; padding:10px 12px; background:#0d0d0d; border:1px solid var(--line); border-radius:8px;
+    color:var(--fg); font:inherit; font-size:14px; }
+  #login input:focus { outline:none; border-color:var(--accent); }
+  #login button { margin-top:18px; width:100%; padding:11px; background:var(--accent); color:#1a0f0a; border:0;
+    border-radius:8px; font:inherit; font-weight:700; font-size:14px; cursor:pointer; }
+  #login button:hover { filter:brightness(1.08); }
+  #err { color:#ff8d8d; font-size:12px; min-height:16px; margin-top:10px; }
+
+  /* app */
+  #app { display:none; height:100%; flex-direction:column; }
+  header { display:flex; align-items:center; gap:12px; padding:8px 14px; background:var(--panel);
+    border-bottom:1px solid var(--line); }
+  header .dot { width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  header .title { font-size:13px; font-weight:700; }
+  header .title b { color:var(--accent); }
+  header .users { margin-left:auto; display:flex; gap:8px; flex-wrap:wrap; }
+  header .chip { font-size:11px; padding:3px 9px; border-radius:999px; background:#0d0d0d; border:1px solid var(--line);
+    display:inline-flex; align-items:center; gap:6px; }
+  header .chip .on { color:var(--muted); font-size:10px; }
+
+  /* tab bar */
+  #tabbar { display:flex; align-items:stretch; gap:4px; padding:6px 8px 0; background:var(--panel);
+    border-bottom:1px solid var(--line); overflow-x:auto; }
+  #tabbar .tab { display:inline-flex; align-items:center; gap:8px; padding:7px 10px 7px 12px; cursor:pointer;
+    background:#0d0d0d; border:1px solid var(--line); border-bottom:none; border-radius:8px 8px 0 0;
+    color:var(--muted); font-size:12px; white-space:nowrap; position:relative; top:1px; transition:color .12s, background .12s; }
+  #tabbar .tab:hover { color:var(--fg); }
+  #tabbar .tab.active { background:var(--bg); color:var(--fg); border-color:var(--line); }
+  #tabbar .tab.active::after { content:''; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--accent); }
+  #tabbar .tab .label { outline:none; }
+  #tabbar .tab .badge { display:inline-flex; gap:2px; }
+  #tabbar .tab .badge i { width:7px; height:7px; border-radius:50%; display:inline-block; }
+  #tabbar .tab .x { color:var(--muted); font-size:13px; line-height:1; padding:0 2px; border-radius:4px; opacity:.55; }
+  #tabbar .tab .x:hover { opacity:1; color:#ff8d8d; background:#1f1414; }
+  #tabbar #addtab { display:inline-flex; align-items:center; justify-content:center; min-width:30px; padding:7px 10px;
+    background:transparent; border:1px solid transparent; color:var(--muted); font-size:17px; line-height:1; cursor:pointer;
+    border-radius:8px 8px 0 0; }
+  #tabbar #addtab:hover { color:var(--accent); background:#0d0d0d; }
+
+  main { flex:1; display:flex; min-height:0; }
+  #termwrap { flex:1; min-width:0; padding:8px 0 8px 8px; }
+  #term { width:100%; height:100%; }
+
+  #side { width:330px; border-left:1px solid var(--line); display:flex; flex-direction:column; background:var(--panel); }
+  #side .head { padding:10px 12px; font-size:12px; color:var(--muted); border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:8px; }
+  #side .head .me { color:var(--fg); }
+  #side .head input { width:120px; background:#0d0d0d; border:1px solid var(--line); border-radius:6px; color:var(--fg);
+    font:inherit; font-size:12px; padding:4px 7px; }
+  #side .head button { background:#0d0d0d; border:1px solid var(--line); color:var(--fg); border-radius:6px;
+    font:inherit; font-size:11px; padding:4px 8px; cursor:pointer; }
+  #chatlog { flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:8px; font-size:13px; }
+  #chatlog .msg .who { font-weight:700; }
+  #chatlog .msg .txt { color:var(--fg); white-space:pre-wrap; word-break:break-word; }
+  #chatlog .sys { color:var(--muted); font-size:11px; font-style:italic; text-align:center; }
+  #chatbar { display:flex; gap:8px; padding:10px; border-top:1px solid var(--line); }
+  #chatinput { flex:1; background:#0d0d0d; border:1px solid var(--line); border-radius:8px; color:var(--fg);
+    font:inherit; font-size:13px; padding:9px 10px; }
+  #chatinput:focus { outline:none; border-color:var(--accent); }
+  #chatsend { background:var(--accent); color:#1a0f0a; border:0; border-radius:8px; font:inherit; font-weight:700;
+    padding:0 14px; cursor:pointer; }
+</style>
+</head>
+<body>
+  <div id="login">
+    <div class="card">
+      <h1><b>collabterm</b> — shared session</h1>
+      <p>Everyone here shares the same terminals. Open as many tabs as you need.</p>
+      <label for="pw">Password</label>
+      <input id="pw" type="password" autocomplete="off" placeholder="shared password">
+      <label for="nm">Display name <span style="text-transform:none">(blank = auto)</span></label>
+      <input id="nm" type="text" autocomplete="off" placeholder="auto-generated">
+      <button id="join">Join session</button>
+      <div id="err"></div>
+    </div>
+  </div>
+
+  <div id="app">
+    <header>
+      <span class="dot"></span>
+      <span class="title"><b>collabterm</b> · shared terminals</span>
+      <span class="users" id="users"></span>
+    </header>
+    <div id="tabbar">
+      <button id="addtab" title="New terminal tab">+</button>
+    </div>
+    <main>
+      <div id="termwrap"><div id="term"></div></div>
+      <div id="side">
+        <div class="head">
+          <span>you: <span class="me" id="me">—</span></span>
+          <input id="newname" type="text" placeholder="rename" maxlength="24">
+          <button id="rename">set</button>
+        </div>
+        <div id="chatlog"></div>
+        <div id="chatbar">
+          <input id="chatinput" type="text" placeholder="message the group…" maxlength="800">
+          <button id="chatsend">Send</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script>
+(function(){
+  var $ = function(id){ return document.getElementById(id); };
+  var ws = null, term = null;
+  var me = { name:'—', color:'#e6e6e6' };
+  var tabs = [];            // [{id, title}]
+  var buffers = {};         // id -> scrollback string (kept so switching is instant)
+  var activeTab = null;     // id this user is viewing
+  var users = [];           // roster incl. which tab each user views
+  var pendingFocus = null;  // a tab id we just created and want to jump to
+
+  function showErr(t){ $('err').textContent = t || ''; }
+
+  $('join').addEventListener('click', join);
+  $('pw').addEventListener('keydown', function(e){ if(e.key==='Enter') join(); });
+  $('nm').addEventListener('keydown', function(e){ if(e.key==='Enter') join(); });
+
+  function join(){
+    var pw = $('pw').value;
+    var nm = $('nm').value.trim();
+    if(!pw){ showErr('Enter the password.'); return; }
+    showErr('connecting…');
+    var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    var url = proto + '://' + location.host + '/?key=' + encodeURIComponent(pw) +
+              (nm ? '&name=' + encodeURIComponent(nm) : '');
+    ws = new WebSocket(url);
+    var opened = false;
+    ws.onopen = function(){ opened = true; };
+    ws.onmessage = onMessage;
+    ws.onclose = function(){
+      if(!term){ showErr(opened ? 'Disconnected.' : 'Wrong password or server unreachable.'); }
+      else { sys('— disconnected —'); }
+    };
+    ws.onerror = function(){ if(!term) showErr('Connection failed.'); };
+  }
+
+  function send(obj){ if(ws && ws.readyState===1) ws.send(JSON.stringify(obj)); }
+
+  function onMessage(ev){
+    var m; try { m = JSON.parse(ev.data); } catch(e){ return; }
+    if(m.type === 'init'){ startApp(m); }
+    else if(m.type === 'out'){
+      buffers[m.tab] = (buffers[m.tab] || '') + m.data;
+      if(buffers[m.tab].length > 200000) buffers[m.tab] = buffers[m.tab].slice(-200000);
+      if(m.tab === activeTab && term) term.write(m.data);
+    }
+    else if(m.type === 'tabs'){ tabs = m.tabs; reconcileTabs(); }
+    else if(m.type === 'tab-created'){ pendingFocus = m.id; }
+    else if(m.type === 'chat'){ addChat(m.name, m.color, m.text); }
+    else if(m.type === 'sys'){ sys(m.text); }
+    else if(m.type === 'users'){ users = m.users; renderUsers(); renderTabs(); }
+  }
+
+  function startApp(m){
+    $('login').style.display = 'none';
+    $('app').style.display = 'flex';
+    me = m.you;
+    $('me').textContent = me.name;
+    $('me').style.color = me.color;
+
+    tabs = m.tabs.map(function(t){ return { id:t.id, title:t.title }; });
+    m.tabs.forEach(function(t){ buffers[t.id] = t.scrollback || ''; });
+    activeTab = tabs.length ? tabs[0].id : null;
+
+    term = new Terminal({
+      cols: m.cols || 120, rows: m.rows || 32,
+      cursorBlink: true, fontSize: 14,
+      fontFamily: "'Cascadia Code','Cascadia Mono',Consolas,monospace",
+      theme: { background:'#0d0d0d', foreground:'#e6e6e6', cursor:'#d97757', selectionBackground:'#3a3d41' }
+    });
+    term.open($('term'));
+    term.onData(function(d){ if(activeTab!=null) send({type:'in', tab:activeTab, data:d}); });
+
+    renderTabs();
+    paintActive();
+    term.focus();
+
+    // terminal copy/paste helpers
+    function pasteText(t){ if(t && activeTab!=null) send({type:'in', tab:activeTab, data:t}); }
+    function copySel(){ var s = term.getSelection(); if(s){ navigator.clipboard.writeText(s).catch(function(){}); } return s; }
+    var termEl = $('term');
+    termEl.addEventListener('contextmenu', function(e){
+      e.preventDefault();
+      var s = copySel();
+      if (s && s.length) { term.clearSelection(); }
+      else { navigator.clipboard.readText().then(pasteText).catch(function(){}); }
+    });
+    term.attachCustomKeyEventHandler(function(e){
+      if (e.type !== 'keydown' || !e.ctrlKey || !e.shiftKey) return true;
+      var k = (e.key || '').toLowerCase();
+      if (k === 'c') { copySel(); return false; }
+      if (k === 'v') { navigator.clipboard.readText().then(pasteText).catch(function(){}); return false; }
+      return true;
+    });
+
+    $('addtab').addEventListener('click', function(){ send({type:'tab-new'}); });
+    $('chatsend').addEventListener('click', sendChat);
+    $('chatinput').addEventListener('keydown', function(e){ if(e.key==='Enter') sendChat(); });
+    $('rename').addEventListener('click', doRename);
+    $('newname').addEventListener('keydown', function(e){ if(e.key==='Enter') doRename(); });
+  }
+
+  // keep local buffers/active selection sane when the tab set changes
+  function reconcileTabs(){
+    var ids = {}; tabs.forEach(function(t){ ids[t.id] = true; });
+    Object.keys(buffers).forEach(function(id){ if(!ids[+id]) delete buffers[+id]; });
+
+    if(pendingFocus != null && ids[pendingFocus]){ switchTo(pendingFocus); pendingFocus = null; return; }
+    if(activeTab == null || !ids[activeTab]){
+      activeTab = tabs.length ? tabs[0].id : null;
+      paintActive();
+    }
+    renderTabs();
+  }
+
+  function switchTo(id){
+    if(id === activeTab) { if(term) term.focus(); return; }
+    activeTab = id;
+    send({type:'tab-view', tab:id});
+    paintActive();
+    renderTabs();
+    if(term) term.focus();
+  }
+
+  // repaint the xterm with the selected tab's buffered output
+  function paintActive(){
+    if(!term) return;
+    term.reset();
+    if(activeTab!=null && buffers[activeTab]) term.write(buffers[activeTab]);
+  }
+
+  function viewersOf(id){ return users.filter(function(u){ return u.tab === id; }); }
+
+  function renderTabs(){
+    var bar = $('tabbar');
+    // wipe existing tab nodes (keep the + button)
+    Array.prototype.slice.call(bar.querySelectorAll('.tab')).forEach(function(n){ n.remove(); });
+    var add = $('addtab');
+
+    tabs.forEach(function(t){
+      var el = document.createElement('div');
+      el.className = 'tab' + (t.id === activeTab ? ' active' : '');
+      el.addEventListener('click', function(e){ if(e.target.classList.contains('x')) return; switchTo(t.id); });
+
+      var label = document.createElement('span');
+      label.className = 'label';
+      label.textContent = t.title;
+      label.title = 'double-click to rename';
+      label.addEventListener('dblclick', function(e){ e.stopPropagation(); renameTab(t, label); });
+      el.appendChild(label);
+
+      // dots for other people currently viewing this tab
+      var others = viewersOf(t.id).filter(function(u){ return u.name !== me.name; });
+      if(others.length){
+        var badge = document.createElement('span'); badge.className = 'badge';
+        badge.title = others.map(function(u){ return u.name; }).join(', ') + ' here';
+        others.slice(0,4).forEach(function(u){ var i=document.createElement('i'); i.style.background=u.color; badge.appendChild(i); });
+        el.appendChild(badge);
+      }
+
+      if(tabs.length > 1){
+        var x = document.createElement('span'); x.className = 'x'; x.textContent = '×'; x.title = 'close tab';
+        x.addEventListener('click', function(e){ e.stopPropagation(); send({type:'tab-close', tab:t.id}); });
+        el.appendChild(x);
+      }
+
+      bar.insertBefore(el, add);
+    });
+  }
+
+  function renameTab(t, label){
+    label.contentEditable = 'true';
+    label.focus();
+    var range = document.createRange(); range.selectNodeContents(label);
+    var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    function commit(){
+      label.contentEditable = 'false';
+      var v = label.textContent.trim().slice(0,32);
+      if(v && v !== t.title) send({type:'tab-rename', tab:t.id, title:v});
+      else label.textContent = t.title;
+      label.removeEventListener('blur', commit);
+      label.removeEventListener('keydown', onKey);
+    }
+    function onKey(e){ if(e.key==='Enter'){ e.preventDefault(); label.blur(); } if(e.key==='Escape'){ label.textContent=t.title; label.blur(); } }
+    label.addEventListener('blur', commit);
+    label.addEventListener('keydown', onKey);
+  }
+
+  function sendChat(){
+    var v = $('chatinput').value.trim();
+    if(!v) return;
+    send({type:'chat', text:v});
+    $('chatinput').value = '';
+  }
+  function doRename(){
+    var v = $('newname').value.trim();
+    if(!v) return;
+    send({type:'name', name:v});
+    me.name = v;
+    $('me').textContent = v;
+    $('newname').value = '';
+  }
+
+  function addChat(name, color, text){
+    var log = $('chatlog');
+    var d = document.createElement('div');
+    d.className = 'msg';
+    var who = document.createElement('span'); who.className='who'; who.style.color = color || '#e6e6e6'; who.textContent = name + ': ';
+    var txt = document.createElement('span'); txt.className='txt'; txt.textContent = text;
+    d.appendChild(who); d.appendChild(txt);
+    log.appendChild(d); log.scrollTop = log.scrollHeight;
+  }
+  function sys(text){
+    var log = $('chatlog');
+    var d = document.createElement('div'); d.className='sys'; d.textContent = text;
+    log.appendChild(d); log.scrollTop = log.scrollHeight;
+  }
+  function renderUsers(){
+    var box = $('users'); box.innerHTML = '';
+    users.forEach(function(u){
+      var s = document.createElement('span'); s.className='chip'; s.style.color = u.color;
+      var nm = document.createElement('span'); nm.textContent = u.name; s.appendChild(nm);
+      var t = tabFor(u.tab);
+      if(t){ var on = document.createElement('span'); on.className='on'; on.textContent = '· ' + t.title; s.appendChild(on); }
+      box.appendChild(s);
+    });
+  }
+  function tabFor(id){ for(var i=0;i<tabs.length;i++) if(tabs[i].id===id) return tabs[i]; return null; }
+})();
+</script>
+</body>
+</html>
