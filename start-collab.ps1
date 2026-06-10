@@ -93,8 +93,8 @@ if ($link) {
 }
 Write-Host '=================================================================='
 Write-Host ''
-Write-Host '   This grants FULL control of Claude on this PC (Gmail/Drive/Stripe)'
-Write-Host '   to everyone with the link + password.'
+Write-Host '   This grants FULL control of Claude on this PC (your files and'
+Write-Host '   anything you are signed into) to everyone with the link + password.'
 Write-Host '   KEEP THIS WINDOW OPEN. Press Enter to STOP sharing.'
 Read-Host | Out-Null
 

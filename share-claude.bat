@@ -75,7 +75,7 @@ if defined LINK (
   echo.
   echo    They open the link in ANY browser - they install nothing.
   echo    This grants FULL control of Claude on this PC, including
-  echo    your connected Gmail / Drive / Stripe and files.
+  echo    your files and anything you are signed into.
 ) else (
   echo    Could not auto-detect the link. Open this file and look for a
   echo    https://...trycloudflare.com  line:
