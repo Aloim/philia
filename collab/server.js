@@ -96,6 +96,25 @@ const wss = new WebSocketServer({ noServer: true });
 const clients = new Map(); // ws -> { name, color, tab }
 let counter = 0;
 
+// ---------- keepalive heartbeat ----------
+// Cloudflare quick tunnels drop a proxied WebSocket that sees no frames for
+// ~100s, so an idle terminal (open but nobody typing) gets disconnected. We
+// ping every client every 30s; the browser auto-replies with a pong, which
+// keeps the tunnel's WS warm in BOTH directions and resets Cloudflare's idle
+// timer. The same round-trip lets us detect and reap dead/half-open sockets:
+// a client that misses a full interval (no pong) is terminated. See the
+// per-connection `pong` handler in the upgrade handler below.
+const HEARTBEAT_MS = 30000;
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { try { ws.terminate(); } catch (e) {} continue; }
+    ws.isAlive = false;
+    try { ws.ping(); } catch (e) {}
+  }
+}, HEARTBEAT_MS);
+if (heartbeat.unref) heartbeat.unref(); // don't let the timer keep the process alive
+wss.on('close', () => clearInterval(heartbeat));
+
 const ADJ   = ['Swift','Calm','Brave','Lucky','Witty','Cosmic','Mellow','Nimble','Sunny','Quiet'];
 const NOUN  = ['Otter','Falcon','Lynx','Heron','Bison','Marten','Raven','Ibex','Koi','Moth'];
 const COLORS= ['#d97757','#9ec07c','#7aa2c9','#e0c285','#c08fc0','#7fc0bf','#e89177','#b3d99a'];
@@ -108,6 +127,8 @@ server.on('upgrade', (req, socket, head) => {
   let url; try { url = new URL(req.url, 'http://localhost'); } catch { socket.destroy(); return; }
   if (url.searchParams.get('key') !== PASSWORD) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
   wss.handleUpgrade(req, socket, head, ws => {
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; }); // heartbeat: proof the peer is alive
     const idx = counter++;
     const reqName = (url.searchParams.get('name') || '').trim().slice(0, 24);
     const name = reqName || autoName(idx);

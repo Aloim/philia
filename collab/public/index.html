@@ -112,6 +112,7 @@
     <header>
       <span class="dot"></span>
       <span class="title"><b>collabterm</b> · shared terminals</span>
+      <span id="reconn" style="display:none; color:#e0c285; font-size:11px;">reconnecting…</span>
       <span class="users" id="users"></span>
       <button id="killbtn" title="Stop the session for everyone and kill all terminals">Stop session</button>
     </header>
@@ -154,6 +155,13 @@
   var users = [];           // roster incl. which tab each user views
   var pendingFocus = null;  // a tab id we just created and want to jump to
 
+  // auto-reconnect state: creds are kept so a dropped socket silently re-joins
+  // without re-prompting. The shared terminals live in the host's server (not in
+  // the socket), so reconnecting re-attaches us to still-running CLI sessions.
+  var savedPw = '', savedNm = '';
+  var stopped = false, reconnecting = false;
+  var reconnectTimer = null, reconnectDelay = 1000;
+
   function showErr(t){ $('err').textContent = t || ''; }
 
   $('join').addEventListener('click', join);
@@ -164,27 +172,48 @@
     var pw = $('pw').value;
     var nm = $('nm').value.trim();
     if(!pw){ showErr('Enter the password.'); return; }
+    savedPw = pw; savedNm = nm;          // remembered so reconnects need no re-login
+    stopped = false; reconnectDelay = 1000;
     showErr('connecting…');
+    connect();
+  }
+
+  // (Re)open the WebSocket from the saved credentials. Used for the first join
+  // AND by the auto-reconnect logic, so a dropped connection never re-prompts.
+  function connect(){
     var proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    var url = proto + '://' + location.host + '/?key=' + encodeURIComponent(pw) +
-              (nm ? '&name=' + encodeURIComponent(nm) : '') +
+    var url = proto + '://' + location.host + '/?key=' + encodeURIComponent(savedPw) +
+              (savedNm ? '&name=' + encodeURIComponent(savedNm) : '') +
               (ADMIN ? '&admin=' + encodeURIComponent(ADMIN) : '');
-    ws = new WebSocket(url);
+    try { ws = new WebSocket(url); } catch(e){ scheduleReconnect(); return; }
     var opened = false;
     ws.onopen = function(){ opened = true; };
     ws.onmessage = onMessage;
     ws.onclose = function(){
-      if(!term){ showErr(opened ? 'Disconnected.' : 'Wrong password or server unreachable.'); }
-      else { sys('— disconnected —'); }
+      if(stopped) return;                 // host stopped the session - stay down
+      if(term){                           // had a live session: keep it, reconnect
+        if(!reconnecting){ reconnecting = true; setReconnecting(true); sys('— connection lost, reconnecting… —'); }
+        scheduleReconnect();
+      } else {
+        showErr(opened ? 'Disconnected.' : 'Wrong password or server unreachable.');
+      }
     };
     ws.onerror = function(){ if(!term) showErr('Connection failed.'); };
   }
+
+  function scheduleReconnect(){
+    if(stopped || reconnectTimer) return;             // one pending attempt at a time
+    reconnectTimer = setTimeout(function(){ reconnectTimer = null; connect(); }, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 10000); // exponential backoff, capped at 10s
+  }
+
+  function setReconnecting(on){ var el = $('reconn'); if(el) el.style.display = on ? 'inline' : 'none'; }
 
   function send(obj){ if(ws && ws.readyState===1) ws.send(JSON.stringify(obj)); }
 
   function onMessage(ev){
     var m; try { m = JSON.parse(ev.data); } catch(e){ return; }
-    if(m.type === 'init'){ startApp(m); }
+    if(m.type === 'init'){ if(term) resync(m); else startApp(m); }
     else if(m.type === 'out'){
       buffers[m.tab] = (buffers[m.tab] || '') + m.data;
       if(buffers[m.tab].length > 200000) buffers[m.tab] = buffers[m.tab].slice(-200000);
@@ -250,6 +279,21 @@
     $('chatinput').addEventListener('keydown', function(e){ if(e.key==='Enter') sendChat(); });
     $('rename').addEventListener('click', doRename);
     $('newname').addEventListener('keydown', function(e){ if(e.key==='Enter') doRename(); });
+  }
+
+  // Re-attach after an auto-reconnect WITHOUT rebuilding the xterm or re-binding
+  // listeners (startApp must run exactly once). The server's fresh `init` carries
+  // the authoritative tabs + recent scrollback, so we just resync our view to it.
+  function resync(m){
+    me = m.you;
+    $('me').textContent = me.name; $('me').style.color = me.color;
+    tabs = m.tabs.map(function(t){ return { id:t.id, title:t.title }; });
+    buffers = {};
+    m.tabs.forEach(function(t){ buffers[t.id] = t.scrollback || ''; });
+    if(activeTab == null || !tabFor(activeTab)) activeTab = tabs.length ? tabs[0].id : null;
+    users = m.users || [];
+    paintActive(); renderTabs(); renderUsers();
+    if(reconnecting){ reconnecting = false; setReconnecting(false); reconnectDelay = 1000; sys('— reconnected —'); }
   }
 
   // keep local buffers/active selection sane when the tab set changes
@@ -365,6 +409,8 @@
     send({type:'kill-all'});
   }
   function sessionEnded(){
+    stopped = true;                          // host ended it - do not auto-reconnect
+    if(reconnectTimer){ clearTimeout(reconnectTimer); reconnectTimer = null; }
     try { if(ws) ws.close(); } catch(e){}
     if(term){ try { term.dispose(); } catch(e){} }
     $('killed').style.display = 'flex';
