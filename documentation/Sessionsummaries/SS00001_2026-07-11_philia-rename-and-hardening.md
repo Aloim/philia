@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-11
 **Continuing from:** none (first session summary in this repository)
-**Releases shipped:** v1.1 (rename), v1.2 (hardening)
+**Releases shipped:** v1.1 (rename), v1.2 (hardening, tagged and published as a GitHub release)
 
 > Two releases in one session. First the project was renamed from
 > **collabterm** to **Philia** (after the Greek goddess of friendship) with a
@@ -74,6 +74,15 @@
 - Web terminal scales its font down on narrow windows (all 120 columns stay
   visible) and stacks the chat below the terminal under 700 px.
 
+### 2.4 Release and cross-linking
+
+- Tagged `v1.2` and published the GitHub release "Philia v1.2: brute-force
+  protection and hardening", marked latest, with notes derived from the
+  changelog.
+- README gained a Companion tools section (mirroring the Phanes README's own):
+  Philia is fully standalone but part of the Phanes toolset, with a link and a
+  description of how the two pair on a shared Phanes-managed project.
+
 ---
 
 ## 3. Decisions taken
@@ -119,6 +128,22 @@
 
 ## 6. Open carryovers
 
+- **The reverse link in the Phanes repository is written but not pushed.** The
+  operator will add it in a Phanes session. The local Phanes checkout was
+  deliberately left untouched because its main has diverged from origin
+  (28 ahead / 12 behind with uncommitted edits); sync first, then add this
+  bullet to the Companion tools section of the published `README.md`, after
+  the Charon entry:
+
+  > - **[Philia](https://github.com/Aloim/philia)** shares a Windows terminal
+  >   in the browser for collaborative or remote vibecoding sessions: a
+  >   password-protected public link, shared terminal tabs, and a side chat,
+  >   tunneled from your own PC with nothing to install for the people you
+  >   invite. It is fully standalone, but it pairs naturally with Phanes:
+  >   share a Phanes-managed project and everyone on the link watches and
+  >   drives the same fully wired agent team together, coordinating in the
+  >   chat, while the host keeps a kill switch and a live on-screen indicator.
+
 - Simple mode's ttyd basic auth still has no brute-force limiter (documented
   honestly in the README). Fixing it would mean proxying ttyd or dropping
   ttyd for the Node server; only worth it if simple mode sees real use.
@@ -130,7 +155,10 @@
 
 ## 7. Next session pickup
 
-Nothing blocked. The repository is pushed, v1.2 is live on the main branch,
-and both launch paths were exercised this session. If a next step is wanted,
-the highest-value one is a real two-machine session over the tunnel to
-confirm the reconnect and lockout interplay end to end.
+1. Add the Philia bullet to the Phanes README (text ready in section 6; do it
+   from a synced Phanes session, not this repository).
+2. Optional: a real two-machine session over the tunnel to confirm the
+   reconnect and lockout interplay end to end.
+
+Everything else is shipped: main is pushed, the v1.2 tag and GitHub release
+are live, and both launch paths were exercised this session.
