@@ -1,4 +1,4 @@
-Required Notice: Copyright (c) 2026 Aloim (https://github.com/Aloim/collabterm)
+Required Notice: Copyright (c) 2026 Aloim (https://github.com/Aloim/philia)
 
 # PolyForm Noncommercial License 1.0.0
 

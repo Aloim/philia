@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>collabterm — shared session</title>
+<title>philia · shared session</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <style>
   :root { --bg:#0d0d0d; --panel:#161616; --line:#2a2a2a; --fg:#e6e6e6; --muted:#8a8a8a; --accent:#d97757; }
@@ -99,7 +99,7 @@
 <body>
   <div id="login">
     <div class="card">
-      <h1><b>collabterm</b> — shared session</h1>
+      <h1><b>philia</b> · shared session</h1>
       <p>Everyone here shares the same terminals. Open as many tabs as you need.</p>
       <label for="pw">Password</label>
       <input id="pw" type="password" autocomplete="off" placeholder="shared password">
@@ -113,7 +113,7 @@
   <div id="app">
     <header>
       <span class="dot"></span>
-      <span class="title"><b>collabterm</b> · shared terminals</span>
+      <span class="title"><b>philia</b> · shared terminals</span>
       <span id="reconn" style="display:none; color:#e0c285; font-size:11px;">reconnecting…</span>
       <span class="users" id="users"></span>
       <button id="killbtn" title="Stop the session for everyone and kill all terminals">Stop session</button>
@@ -125,7 +125,7 @@
       <div id="termwrap"><div id="term"></div></div>
       <div id="side">
         <div class="head">
-          <span>you: <span class="me" id="me">—</span></span>
+          <span>you: <span class="me" id="me">-</span></span>
           <input id="newname" type="text" placeholder="rename" maxlength="24">
           <button id="rename">set</button>
         </div>
@@ -140,7 +140,7 @@
 
   <div id="killed"><div class="box">
     <h2>Session ended</h2>
-    <p>The host stopped this collabterm session. All shared terminals and the public
+    <p>The host stopped this philia session. All shared terminals and the public
        link have been shut down.</p>
   </div></div>
 
@@ -150,7 +150,7 @@
   var $ = function(id){ return document.getElementById(id); };
   var ws = null, term = null;
   var ADMIN = new URLSearchParams(location.search).get('admin') || '';
-  var me = { name:'—', color:'#e6e6e6' };
+  var me = { name:'-', color:'#e6e6e6' };
   var tabs = [];            // [{id, title}]
   var buffers = {};         // id -> scrollback string (kept so switching is instant)
   var activeTab = null;     // id this user is viewing
@@ -194,7 +194,7 @@
     ws.onclose = function(){
       if(stopped) return;                 // host stopped the session - stay down
       if(term){                           // had a live session: keep it, reconnect
-        if(!reconnecting){ reconnecting = true; setReconnecting(true); sys('— connection lost, reconnecting… —'); }
+        if(!reconnecting){ reconnecting = true; setReconnecting(true); sys('connection lost, reconnecting…'); }
         scheduleReconnect();
       } else {
         showErr(opened ? 'Disconnected.' : 'Wrong password or server unreachable.');
@@ -295,7 +295,7 @@
     if(activeTab == null || !tabFor(activeTab)) activeTab = tabs.length ? tabs[0].id : null;
     users = m.users || [];
     paintActive(); renderTabs(); renderUsers();
-    if(reconnecting){ reconnecting = false; setReconnecting(false); reconnectDelay = 1000; sys('— reconnected —'); }
+    if(reconnecting){ reconnecting = false; setReconnecting(false); reconnectDelay = 1000; sys('reconnected'); }
   }
 
   // keep local buffers/active selection sane when the tab set changes

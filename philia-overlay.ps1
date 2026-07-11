@@ -1,7 +1,7 @@
-# Always-on-top "collabterm live" indicator for the HOST.
+# Always-on-top "philia live" indicator for the HOST.
 # A small, click-through, topmost pill in the top-right corner of the primary
 # screen, so the host always knows a session is live - even with every window
-# minimized. _collabterm.ps1 launches this hidden and ties it to the same
+# minimized. _philia.ps1 launches this hidden and ties it to the same
 # kill-on-close job, so it shows for exactly as long as the session is live.
 #
 # -HostPid lets the overlay self-close if the launcher process disappears, as a
@@ -43,7 +43,7 @@ public static class NativeOverlay {
   $form.ShowInTaskbar   = $false
   $form.BackColor       = [System.Drawing.Color]::FromArgb(13,13,13)
   $form.Opacity         = 0.86
-  $form.Width           = 162
+  $form.Width           = 138
   $form.Height          = 30
 
   # rounded-pill shape
@@ -72,7 +72,7 @@ public static class NativeOverlay {
 
   # label
   $lbl = New-Object System.Windows.Forms.Label
-  $lbl.Text      = 'collabterm live'
+  $lbl.Text      = 'philia live'
   $lbl.ForeColor = [System.Drawing.Color]::FromArgb(230,230,230)
   $lbl.Font      = New-Object System.Drawing.Font('Segoe UI',9,[System.Drawing.FontStyle]::Bold)
   $lbl.AutoSize  = $true

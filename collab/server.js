@@ -52,7 +52,7 @@ function createTab() {
     if (shuttingDown) return;          // whole session is being torn down; don't respawn
     if (!tabs.has(id)) return;
     tabs.delete(id);
-    broadcast({ type: 'sys', text: `— tab "${tab.title}" exited —` });
+    broadcast({ type: 'sys', text: `tab "${tab.title}" exited` });
     if (tabs.size === 0) createTab();
     broadcastTabs();
   });
@@ -154,7 +154,7 @@ server.on('upgrade', (req, socket, head) => {
         if (t && t.term) t.term.write(m.data);
       }
       else if (m.type === 'tab-new') {
-        if (tabs.size >= MAX_TABS) { ws.send(JSON.stringify({ type: 'sys', text: `— tab limit (${MAX_TABS}) reached —` })); return; }
+        if (tabs.size >= MAX_TABS) { ws.send(JSON.stringify({ type: 'sys', text: `tab limit (${MAX_TABS}) reached` })); return; }
         const t = createTab();
         broadcast({ type: 'sys', text: `${c.name} opened tab "${t.title}"` });
         broadcastTabs();
@@ -166,7 +166,7 @@ server.on('upgrade', (req, socket, head) => {
       }
       else if (m.type === 'kill-all') {
         if (!c.isHost) return;          // enforced server-side: only the host may stop the session
-        broadcast({ type: 'sys', text: `— ${c.name} (host) stopped the session —` });
+        broadcast({ type: 'sys', text: `${c.name} (host) stopped the session` });
         broadcast({ type: 'killed', by: c.name });
         shutdown(`kill-all from host ${c.name}`);
       }
@@ -191,4 +191,4 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-server.listen(PORT, () => console.log(`collab terminal on http://localhost:${PORT} (cwd=${CWD})`));
+server.listen(PORT, () => console.log(`philia terminal on http://localhost:${PORT} (cwd=${CWD})`));

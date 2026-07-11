@@ -118,12 +118,12 @@ $cfProc = Start-Process -FilePath $cfd -WindowStyle Minimized -PassThru `
 # Tie the tunnel to the same kill-on-close job.
 if ($job -ne [IntPtr]::Zero -and $cfProc) { try { [Win32Job]::Assign($job, $cfProc.Id) | Out-Null } catch {} }
 
-# --- always-on-top "collabterm live" indicator (host awareness) ------------
+# --- always-on-top "philia live" indicator (host awareness) ----------------
 # A topmost red dot in the top-right of the screen so the host can't lose track
 # of an open session, even with every window minimized. Tied to the same job,
 # so it shows for exactly as long as the session is live.
 $ovProc = $null
-$overlayScript = Join-Path $root 'collab-overlay.ps1'
+$overlayScript = Join-Path $root 'philia-overlay.ps1'
 if (Test-Path $overlayScript) {
   try {
     $ovProc = Start-Process -FilePath 'powershell' -WindowStyle Hidden -PassThru -ArgumentList @(
@@ -140,7 +140,7 @@ function Read-Shared($p){ try { $fs=[IO.File]::Open($p,'Open','Read','ReadWrite'
 # blank during the few seconds before the link and password are ready to share.
 Clear-Host
 Write-Host '=================================================================='
-Write-Host '   COLLABORATIVE CLAUDE SESSION'
+Write-Host '   PHILIA COLLABORATIVE SESSION'
 Write-Host '=================================================================='
 Write-Host ''
 $spin = '|','/','-','\'
@@ -155,7 +155,7 @@ Clear-Host
 Write-Host '=================================================================='
 if ($link) {
   Set-Content -Path $linkfile -Value $link -Encoding ascii
-  Write-Host '   COLLABORATIVE CLAUDE SESSION'
+  Write-Host '   PHILIA COLLABORATIVE SESSION'
   Write-Host '=================================================================='
   Write-Host ''
   Write-Host "       Link:     $link"
