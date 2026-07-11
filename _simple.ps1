@@ -4,15 +4,16 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
-$root   = $PSScriptRoot
-$collab = Join-Path $root 'collab'
-$tools  = Join-Path $root 'tools'
-$cfd    = Join-Path $tools 'cloudflared.exe'
-$cflog  = Join-Path $tools 'cf-collab.log'
-$cferr  = Join-Path $tools 'cf-collab.err.log'
+$root  = $PSScriptRoot
+$tools = Join-Path $root 'tools'
+$ttyd  = Join-Path $tools 'ttyd.exe'
+$cfd   = Join-Path $tools 'cloudflared.exe'
+$cflog = Join-Path $tools 'cf-simple.log'
+$cferr = Join-Path $tools 'cf-simple.err.log'
 $linkfile = Join-Path $root 'link.txt'
 
-$PORT     = 7681
+$PORT  = 7681
+$GUSER = 'guest'
 
 # Password: -Password / $env:SHARE_PASSWORD, otherwise generate a readable one.
 if (-not $Password) { $Password = $env:SHARE_PASSWORD }
@@ -23,53 +24,35 @@ if (-not $Password) {
   $Password = '{0}-{1}-{2}' -f $adj[$rng.Next($adj.Count)], $noun[$rng.Next($noun.Count)], $rng.Next(1000,9999)
 }
 $PASSWORD = $Password
-$PROJECT  = $Project   # defaults to this script's folder (see -Project param)
-
-# Host-only kill switch. A secret known ONLY to this local host window: the host
-# opens the admin URL below (on this PC) to get an in-browser "Stop session"
-# button. It is never shown over the tunnel and never written to link.txt.
-$AdminToken = ([guid]::NewGuid().ToString('N')) + ([guid]::NewGuid().ToString('N'))
-$adminUrl   = "http://localhost:$PORT/?admin=$AdminToken"
 
 New-Item -ItemType Directory -Force -Path $tools | Out-Null
 
-# --- node.js is required for the collaborative server; fail fast with a clear
-#     message instead of printing a public link that would never answer ---
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Write-Host 'ERROR: Node.js was not found on your PATH.'
-  Write-Host 'Install it from https://nodejs.org and run this launcher again.'
-  Read-Host 'Enter to exit'; exit 1
+# --- one-time, host-side downloads (remote users install NOTHING) ---
+if (-not (Test-Path $ttyd)) {
+  Write-Host 'Downloading ttyd (web terminal)...'
+  try { Invoke-WebRequest 'https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.win32.exe' -OutFile $ttyd -UseBasicParsing } catch {}
 }
-
-# --- cloudflared (host-side; remote users install NOTHING) ---
+if (-not (Test-Path $ttyd)) { Write-Host 'ERROR: ttyd download failed.'; Read-Host 'Enter to exit'; exit 1 }
 if (-not (Test-Path $cfd)) {
-  Write-Host 'Downloading cloudflared...'
+  Write-Host 'Downloading cloudflared (public link)...'
   try { Invoke-WebRequest 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe' -OutFile $cfd -UseBasicParsing } catch {}
 }
 if (-not (Test-Path $cfd)) { Write-Host 'ERROR: cloudflared download failed.'; Read-Host 'Enter to exit'; exit 1 }
 
-# --- node dependencies (one-time) ---
-if (-not (Test-Path (Join-Path $collab 'node_modules'))) {
-  Write-Host 'Installing terminal-server dependencies (one-time, ~1 min)...'
-  Push-Location $collab
-  & npm install ws "@homebridge/node-pty-prebuilt-multiarch" --no-audit --no-fund --loglevel=error
-  Pop-Location
-}
-
-# --- free our port (old session/ttyd), stop OUR leftover cloudflared only ---
-# Scoped to the copy in tools\ so an unrelated cloudflared the user runs for
-# something else is left alone.
+# --- free our port, stop OUR leftover ttyd/cloudflared only ---
+# Scoped to the copies in tools\ so unrelated ttyd/cloudflared processes the
+# user runs for something else are left alone.
 $old = Get-NetTCPConnection -LocalPort $PORT -State Listen -ErrorAction SilentlyContinue
 if ($old) { $old.OwningProcess | Select-Object -Unique | ForEach-Object { cmd /c "taskkill /F /T /PID $_" > $null 2>&1 } }
-Get-Process cloudflared -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $cfd } | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process ttyd,cloudflared -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $ttyd -or $_.Path -eq $cfd } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep 1
 Remove-Item $cflog,$cferr -ErrorAction SilentlyContinue
 
 # --- job object so EVERYTHING dies with this window (kill-on-close) ---------
-# Whatever we assign to this job (the node server, cloudflared, and the child
-# shells node spawns) is killed by Windows the instant this host window goes
-# away - even a forced close - so a closed window can never leave an orphaned
-# public tunnel running and accessible.
+# Whatever we assign to this job (ttyd, its child shells, and cloudflared) is
+# killed by Windows the instant this host window goes away - even a forced
+# close - so a closed window can never leave an orphaned public tunnel running
+# and accessible.
 $job = [IntPtr]::Zero
 try {
   if (-not ('Win32Job' -as [type])) {
@@ -108,30 +91,22 @@ public static class Win32Job {
   $job = [Win32Job]::Create()
 } catch { $job = [IntPtr]::Zero }
 
-# --- start the collaborative terminal server ---
-$env:PORT              = "$PORT"
-$env:SHARE_PASSWORD    = $PASSWORD
-$env:SHARE_CWD         = $PROJECT
-$env:SHARE_ADMIN_TOKEN = $AdminToken
-$nodeProc = Start-Process -FilePath 'node' -ArgumentList ('"' + (Join-Path $collab 'server.js') + '"') `
-  -WindowStyle Minimized -PassThru `
-  -RedirectStandardOutput (Join-Path $collab 'server.out.log') `
-  -RedirectStandardError  (Join-Path $collab 'server.err.log')
-# Tie the server (and every shell it later spawns) to the kill-on-close job.
-if ($job -ne [IntPtr]::Zero -and $nodeProc) { try { [Win32Job]::Assign($job, $nodeProc.Id) | Out-Null } catch {} }
-Start-Sleep 2
+# --- start the web terminal (loopback only; the tunnel connects locally) ---
+# Dark background for the web terminal (xterm.js theme). Inner quotes are
+# escaped as \" so they survive to ttyd's JSON parser.
+$theme = 'theme={\"background\":\"#0d0d0d\",\"foreground\":\"#e6e6e6\",\"cursor\":\"#d97757\"}'
+$ttydProc = Start-Process -FilePath $ttyd -WindowStyle Minimized -PassThru -ArgumentList @(
+  '-p',"$PORT",'-i','127.0.0.1','-W','-c',"${GUSER}:$PASSWORD",'-w',$Project,'-t',$theme,'powershell','-NoLogo')
+if ($job -ne [IntPtr]::Zero -and $ttydProc) { try { [Win32Job]::Assign($job, $ttydProc.Id) | Out-Null } catch {} }
+Start-Sleep 1
 
 # --- public tunnel ---
 $cfProc = Start-Process -FilePath $cfd -WindowStyle Minimized -PassThru `
   -ArgumentList @('tunnel','--url',"http://localhost:$PORT") `
   -RedirectStandardOutput $cflog -RedirectStandardError $cferr
-# Tie the tunnel to the same kill-on-close job.
 if ($job -ne [IntPtr]::Zero -and $cfProc) { try { [Win32Job]::Assign($job, $cfProc.Id) | Out-Null } catch {} }
 
 # --- always-on-top "philia live" indicator (host awareness) ----------------
-# A topmost red dot in the top-right of the screen so the host can't lose track
-# of an open session, even with every window minimized. Tied to the same job,
-# so it shows for exactly as long as the session is live.
 $ovProc = $null
 $overlayScript = Join-Path $root 'philia-overlay.ps1'
 if (Test-Path $overlayScript) {
@@ -145,12 +120,9 @@ if (Test-Path $overlayScript) {
 # --- read the public link (shared read so the file lock can't block us) ---
 function Read-Shared($p){ try { $fs=[IO.File]::Open($p,'Open','Read','ReadWrite'); $sr=New-Object IO.StreamReader($fs); $t=$sr.ReadToEnd(); $sr.Close(); $fs.Close(); return $t } catch { return '' } }
 
-# Show a clear "loading" screen with a spinner while cloudflared spins up and we
-# wait for it to hand us a public link, so the host window never looks frozen or
-# blank during the few seconds before the link and password are ready to share.
 Clear-Host
 Write-Host '=================================================================='
-Write-Host '   PHILIA COLLABORATIVE SESSION'
+Write-Host '   PHILIA SIMPLE SESSION'
 Write-Host '=================================================================='
 Write-Host ''
 $spin = '|','/','-','\'
@@ -165,43 +137,36 @@ Clear-Host
 Write-Host '=================================================================='
 if ($link) {
   Set-Content -Path $linkfile -Value $link -Encoding ascii
-  Write-Host '   PHILIA COLLABORATIVE SESSION'
+  Write-Host '   PHILIA SIMPLE SESSION - SEND THE OTHER PERSON ALL THREE:'
   Write-Host '=================================================================='
   Write-Host ''
   Write-Host "       Link:     $link"
+  Write-Host "       Username: $GUSER"
   Write-Host "       Password: $PASSWORD"
   Write-Host ''
   Write-Host "   (link also saved to $linkfile)"
   Write-Host ''
-  Write-Host '   Everyone opens the link, enters the password, picks a name.'
-  Write-Host '   They all SEE & CONTROL the same terminal + a shared chat.'
-  Write-Host '   Browser only - nobody installs anything.'
+  Write-Host '   They open the link in ANY browser - they install nothing.'
 } else {
   Write-Host '   Could not detect the link.'
-  Write-Host "   Check $cflog  and  $collab\server.err.log"
+  Write-Host "   Check $cflog"
 }
 Write-Host '=================================================================='
 Write-Host ''
-Write-Host '   HOST CONTROLS (this PC only - do NOT share this link):'
-Write-Host "       $adminUrl"
-Write-Host '   Open it on this PC, enter the password, and you get a red'
-Write-Host '   "Stop session" button that kills the WHOLE session for everyone.'
-Write-Host ''
-Write-Host '   This grants FULL control of Claude on this PC (your files and'
-Write-Host '   anything you are signed into) to everyone with the link + password.'
-Write-Host '   KEEP THIS WINDOW OPEN. Press Enter here (or click "Stop session"'
-Write-Host '   in the host tab) to STOP sharing.'
+Write-Host '   This grants FULL control of a shell on this PC (your files and'
+Write-Host '   anything you are signed into) to everyone with the link, the'
+Write-Host '   username, and the password.'
+Write-Host '   KEEP THIS WINDOW OPEN. Press Enter here to STOP sharing.'
 Write-Host '=================================================================='
 
 # --- linked shutdown: stop everything if ANY piece stops -------------------
-# Wait until the host presses Enter, OR the node server exits (e.g. the
-# in-browser "Stop session" button), OR the tunnel dies. Whichever happens
-# first, we tear down the rest so nothing is left running or publicly exposed.
-# The job object above is the backstop for a hard window close.
+# Wait until the host presses Enter, OR ttyd exits, OR the tunnel dies.
+# Whichever happens first, we tear down the rest so nothing is left running or
+# publicly exposed. The job object above is the backstop for a hard window close.
 $reason = $null
 while (-not $reason) {
-  if ($nodeProc.HasExited) { $reason = 'the terminal server stopped'; break }
-  if ($cfProc.HasExited)   { $reason = 'the tunnel stopped';          break }
+  if ($ttydProc.HasExited) { $reason = 'the web terminal stopped'; break }
+  if ($cfProc.HasExited)   { $reason = 'the tunnel stopped';       break }
   try {
     if ([Console]::KeyAvailable) {
       $k = [Console]::ReadKey($true)
@@ -214,8 +179,8 @@ while (-not $reason) {
 Write-Host ''
 Write-Host "Stopping session ($reason)..."
 
-# --- clean up everything we started (and its child shells/agents) ---
+# --- clean up everything we started (and the shells ttyd spawned) ---
 if ($ovProc   -and -not $ovProc.HasExited)   { try { Stop-Process -Id $ovProc.Id -Force -ErrorAction SilentlyContinue } catch {} }
 if ($cfProc   -and -not $cfProc.HasExited)   { try { Stop-Process -Id $cfProc.Id -Force -ErrorAction SilentlyContinue } catch {} }
-if ($nodeProc -and -not $nodeProc.HasExited) { cmd /c "taskkill /F /T /PID $($nodeProc.Id)" > $null 2>&1 }
+if ($ttydProc -and -not $ttydProc.HasExited) { cmd /c "taskkill /F /T /PID $($ttydProc.Id)" > $null 2>&1 }
 Write-Host 'Session stopped. You can close this window.'

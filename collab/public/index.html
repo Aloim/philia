@@ -14,7 +14,7 @@
   /* login gate */
   #login { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
     background:radial-gradient(1200px 600px at 50% -10%, #1b1b1b, #0d0d0d); z-index:10; }
-  #login .card { width:340px; background:var(--panel); border:1px solid var(--line); border-radius:14px;
+  #login .card { width:340px; max-width:92vw; background:var(--panel); border:1px solid var(--line); border-radius:14px;
     padding:26px 24px; box-shadow:0 20px 60px rgba(0,0,0,.5); }
   #login h1 { margin:0 0 4px; font-size:18px; }
   #login h1 b { color:var(--accent); }
@@ -26,7 +26,16 @@
   #login button { margin-top:18px; width:100%; padding:11px; background:var(--accent); color:#1a0f0a; border:0;
     border-radius:8px; font:inherit; font-weight:700; font-size:14px; cursor:pointer; }
   #login button:hover { filter:brightness(1.08); }
+  #login button:disabled { opacity:.55; cursor:default; filter:none; }
+  #login button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   #err { color:#ff8d8d; font-size:12px; min-height:16px; margin-top:10px; }
+  #err.warn { color:#e0c285; }
+  #err.wait { color:var(--muted); }
+  /* cooldown countdown: a thin bar that drains while the next attempt is blocked */
+  #cooltrack { margin-top:8px; height:2px; background:var(--line); border-radius:2px; overflow:hidden; visibility:hidden; }
+  #coolbar { height:100%; width:0%; background:#e0c285; }
+  #coolbar.locked { background:#ff8d8d; }
+  @media (prefers-reduced-motion: no-preference) { #coolbar { transition:width .2s linear; } }
 
   /* app */
   #app { display:none; height:100%; flex-direction:column; }
@@ -94,6 +103,13 @@
   #chatinput:focus { outline:none; border-color:var(--accent); }
   #chatsend { background:var(--accent); color:#1a0f0a; border:0; border-radius:8px; font:inherit; font-weight:700;
     padding:0 14px; cursor:pointer; }
+
+  /* narrow screens: stack the chat under the terminal instead of beside it */
+  @media (max-width: 700px){
+    main { flex-direction:column; }
+    #side { width:100%; height:40%; min-height:150px; border-left:none; border-top:1px solid var(--line); }
+    #termwrap { padding:8px; }
+  }
 </style>
 </head>
 <body>
@@ -107,6 +123,7 @@
       <input id="nm" type="text" autocomplete="off" placeholder="auto-generated">
       <button id="join">Join session</button>
       <div id="err"></div>
+      <div id="cooltrack"><div id="coolbar"></div></div>
     </div>
   </div>
 
@@ -164,25 +181,38 @@
   var stopped = false, reconnecting = false;
   var reconnectTimer = null, reconnectDelay = 1000;
 
-  function showErr(t){ $('err').textContent = t || ''; }
+  // auth-cooldown state: the server answers a rejected key with a 'denied'
+  // message carrying reason + retryMs; we render it as a live countdown
+  var denied = null;
+  var coolTimer = null, coolEnd = 0, coolSpan = 0, coolInfo = null;
+
+  function showErr(t, tone){ var e = $('err'); e.textContent = t || ''; e.className = tone || ''; }
+
+  function fmtDur(ms){
+    var s = Math.max(0, Math.ceil(ms / 1000));
+    if(s < 60) return s + 's';
+    return Math.floor(s / 60) + ':' + ('0' + (s % 60)).slice(-2);
+  }
 
   $('join').addEventListener('click', join);
   $('pw').addEventListener('keydown', function(e){ if(e.key==='Enter') join(); });
   $('nm').addEventListener('keydown', function(e){ if(e.key==='Enter') join(); });
 
   function join(){
+    if(coolTimer) return;                // a cooldown is running; the countdown owns the UI
     var pw = $('pw').value;
     var nm = $('nm').value.trim();
     if(!pw){ showErr('Enter the password.'); return; }
     savedPw = pw; savedNm = nm;          // remembered so reconnects need no re-login
     stopped = false; reconnectDelay = 1000;
-    showErr('connecting…');
+    showErr('connecting…', 'wait');
     connect();
   }
 
   // (Re)open the WebSocket from the saved credentials. Used for the first join
   // AND by the auto-reconnect logic, so a dropped connection never re-prompts.
   function connect(){
+    denied = null;                       // each fresh attempt starts clean
     var proto = location.protocol === 'https:' ? 'wss' : 'ws';
     var url = proto + '://' + location.host + '/?key=' + encodeURIComponent(savedPw) +
               (savedNm ? '&name=' + encodeURIComponent(savedNm) : '') +
@@ -193,6 +223,7 @@
     ws.onmessage = onMessage;
     ws.onclose = function(){
       if(stopped) return;                 // host stopped the session - stay down
+      if(denied) return;                  // handleDenied owns the UI (and any retry)
       if(term){                           // had a live session: keep it, reconnect
         if(!reconnecting){ reconnecting = true; setReconnecting(true); sys('connection lost, reconnecting…'); }
         scheduleReconnect();
@@ -226,7 +257,62 @@
     else if(m.type === 'chat'){ addChat(m.name, m.color, m.text); }
     else if(m.type === 'sys'){ sys(m.text); }
     else if(m.type === 'users'){ users = m.users; renderUsers(); renderTabs(); }
+    else if(m.type === 'denied'){ handleDenied(m); }
     else if(m.type === 'killed'){ sessionEnded(); }
+  }
+
+  // The server rejected our key. Pre-login: show why and count down until the
+  // next attempt is allowed; if the attempt was never evaluated (someone else
+  // used the 5 second window), retry it automatically. Mid-session: reschedule
+  // the reconnect for when the server will listen again.
+  function handleDenied(m){
+    if(term){
+      if(reconnectTimer){ clearTimeout(reconnectTimer); reconnectTimer = null; }
+      if(m.reason === 'wrong'){ reconnecting = false; setReconnecting(false); sys('reconnect rejected: wrong password (was it changed?)'); return; }
+      var wait = Math.max(1000, (m.retryMs || 5000) + 500);
+      if(m.reason === 'lockout') sys('reconnect blocked by a lockout, retrying in ' + fmtDur(m.retryMs || 0));
+      reconnectTimer = setTimeout(function(){ reconnectTimer = null; connect(); }, wait);
+      return;
+    }
+    denied = m;
+    startCooldown(m);
+  }
+
+  function startCooldown(m){
+    clearCooldown();
+    coolInfo = m; coolSpan = m.retryMs || 0; coolEnd = Date.now() + coolSpan;
+    $('join').disabled = true;
+    $('coolbar').className = m.reason === 'lockout' ? 'locked' : '';
+    $('cooltrack').style.visibility = 'visible';
+    paintCooldown();
+    coolTimer = setInterval(paintCooldown, 200);
+  }
+  function clearCooldown(){
+    if(coolTimer){ clearInterval(coolTimer); coolTimer = null; }
+    coolInfo = null;
+    $('join').disabled = false;
+    $('cooltrack').style.visibility = 'hidden';
+    $('coolbar').style.width = '0%';
+  }
+  function paintCooldown(){
+    var left = coolEnd - Date.now();
+    if(left <= 0){ finishCooldown(); return; }
+    $('coolbar').style.width = (coolSpan ? (left / coolSpan * 100) : 0) + '%';
+    var t = fmtDur(left), m = coolInfo;
+    if(m.reason === 'lockout'){ showErr('Too many wrong attempts. Locked for ' + t + '.', ''); }
+    else if(m.reason === 'throttle'){ showErr('Hold on, another attempt was just made. Retrying in ' + t + '.', 'wait'); }
+    else if(m.left != null && m.left <= 2){ showErr('Wrong password. ' + m.left + (m.left === 1 ? ' attempt' : ' attempts') + ' left before a ' + m.lockMin + ' minute lockout. Next attempt in ' + t + '.', 'warn'); }
+    else { showErr('Wrong password. Next attempt in ' + t + '.', ''); }
+  }
+  function finishCooldown(){
+    var m = coolInfo;
+    clearCooldown();
+    denied = null;
+    if(!m) return;
+    if(m.reason === 'throttle'){ join(); return; }   // never evaluated: retry as-is
+    if(m.reason === 'lockout'){ showErr('You can try again now.', 'wait'); return; }
+    if(m.left != null && m.left <= 2){ showErr('Wrong password. ' + m.left + (m.left === 1 ? ' attempt' : ' attempts') + ' left before a ' + m.lockMin + ' minute lockout.', 'warn'); }
+    else { showErr('Wrong password.', ''); }
   }
 
   function startApp(m){
@@ -252,6 +338,8 @@
     renderTabs();
     paintActive();
     term.focus();
+    fitFont();
+    setTimeout(fitFont, 400);   // once more after web fonts settle
 
     // terminal copy/paste helpers
     function pasteText(t){ if(t && activeTab!=null) send({type:'in', tab:activeTab, data:t}); }
@@ -444,6 +532,28 @@
     });
   }
   function tabFor(id){ for(var i=0;i<tabs.length;i++) if(tabs[i].id===id) return tabs[i]; return null; }
+
+  // The pty is a fixed 120 columns for every viewer (a shared terminal has one
+  // size), so on narrow windows we shrink the font until all 120 fit instead
+  // of forcing a horizontal scroll. Never above the 14px default.
+  var FONT_STACK = "'Cascadia Code','Cascadia Mono',Consolas,monospace";
+  function charW(px){
+    var s = document.createElement('span');
+    s.style.cssText = 'position:absolute;visibility:hidden;white-space:pre;font:' + px + 'px ' + FONT_STACK + ';';
+    s.textContent = new Array(101).join('M');
+    document.body.appendChild(s);
+    var w = s.getBoundingClientRect().width / 100;
+    s.remove();
+    return w;
+  }
+  function fitFont(){
+    if(!term) return;
+    var avail = $('termwrap').clientWidth - 24;   // padding + xterm scrollbar
+    if(avail <= 0) return;
+    var size = Math.max(8, Math.min(14, Math.floor(14 * avail / (charW(14) * term.cols))));
+    if(size !== term.options.fontSize) term.options.fontSize = size;
+  }
+  window.addEventListener('resize', fitFont);
 })();
 </script>
 </body>

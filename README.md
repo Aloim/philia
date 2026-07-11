@@ -54,21 +54,28 @@ reach. Treat the link and password like a remote-desktop password:
 
 - Only share with people you trust, over a private channel.
 - A fresh random password is generated each run and printed in the window.
-- The tunnel URL is public, so the password is the only thing protecting it.
-
-Collaborative mode adds several safety layers on top:
-
-- A host-only **Stop session** button (and pressing Enter, or closing the window) instantly
-  tears down every Philia process: terminals, the Node server, and the public tunnel.
-- All the pieces are tied to one Windows job object, so even a force-closed window takes
-  the tunnel down with it; nothing can keep running unattended in the background.
+- The tunnel URL is public, so the password is what protects it. In collaborative mode,
+  wrong-password attempts are heavily rate limited (see below).
+- Both launchers tie every process they start (terminals, server, tunnel, indicator) to one
+  Windows job object, so even a force-closed window takes the whole session down with it;
+  nothing can keep running unattended in the background.
+- Both servers listen on 127.0.0.1 only, so the tunnel link (or the host PC itself) is the
+  only way in; nothing is reachable from the local network directly.
 - A topmost "philia live" indicator stays on the host's screen for the whole session, so an
   open session is hard to forget about.
 
-Simple mode is more basic: it stops when you press a key in its window, and every new
-launch cleans up leftover ttyd and cloudflared processes. If you force-close its window
-instead of stopping it, check Task Manager (or simply run the launcher again) to make sure
-the tunnel is really gone.
+Collaborative mode adds two more layers:
+
+- A host-only **Stop session** button (and pressing Enter, or closing the window) instantly
+  tears down every Philia process: terminals, the Node server, and the public tunnel.
+- Brute-force protection on the password: every wrong attempt blocks the next attempt for
+  5 seconds (shown as a live countdown in the login card), 5 wrong attempts lock new
+  attempts out for 5 minutes, and the lockout escalates from there (3 attempts / 10
+  minutes, then 2 / 30 minutes, then 1 attempt per hour) until a correct login resets it.
+  The limits are global rather than per IP, so guessing from many machines at once does
+  not help; while a lockout is running, attempts are rejected without being checked, so
+  even a correct guess in that window buys nothing. Simple mode relies on ttyd's basic
+  auth, which has no such limiter.
 
 ## Requirements
 
@@ -108,7 +115,8 @@ launch-simple.bat "C:\some\path"   :: shares a different folder
 The window prints a `https://<random>.trycloudflare.com` link and a password. Send both to
 your collaborators and keep the window open.
 
-The host window also prints a **host-only `http://localhost:...?admin=...` URL**. Open that
+In collaborative mode, the host window also prints a **host-only
+`http://localhost:...?admin=...` URL**. Open that
 on the host PC to join with a red **Stop session** button that kills the whole session
 (every shared terminal plus the public link) for everyone. That admin link is shown only in
 the host window and must not be shared. Stopping the session any way (the button, pressing
@@ -155,8 +163,8 @@ scripts live, and the password is generated per run.
 
 ## Version
 
-Current: **v1.1** (2026-07-11). Philia was previously published as **collabterm**; v1.1 is
-the rename release, with no functional changes. Full release history:
+Current: **v1.2** (2026-07-11). Philia was previously published as **collabterm**; v1.1
+was the rename release and v1.2 the hardening release. Full release history:
 [`Changelog.md`](Changelog.md).
 
 ---

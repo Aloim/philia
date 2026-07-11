@@ -4,9 +4,10 @@
 // picks which tab they view/type into locally; output is broadcast per tab.
 // Auth = shared password via ?key= on the WS.
 
-const http = require('http');
-const fs   = require('fs');
-const path = require('path');
+const http   = require('http');
+const fs     = require('fs');
+const path   = require('path');
+const crypto = require('crypto');
 
 let pty;
 try { pty = require('@homebridge/node-pty-prebuilt-multiarch'); }
@@ -16,8 +17,15 @@ let WebSocketServer;
 try { ({ WebSocketServer } = require('ws')); }
 catch (e) { console.error('FATAL: ws not installed. Run npm install here.'); process.exit(1); }
 
-const PORT     = parseInt(process.env.PORT || '7681', 10);
-const PASSWORD = process.env.SHARE_PASSWORD || 'changeme';
+const PORT = parseInt(process.env.PORT || '7681', 10);
+// Never fall back to a guessable default: if the launcher didn't hand us a
+// password, generate a random one and print it so a bare `node server.js`
+// is still protected.
+let PASSWORD = process.env.SHARE_PASSWORD || '';
+if (!PASSWORD) {
+  PASSWORD = crypto.randomBytes(9).toString('base64url');
+  console.log(`SHARE_PASSWORD not set; using generated password: ${PASSWORD}`);
+}
 // Host-only kill switch. The launcher generates this and prints it ONLY in the
 // local host console (never over the tunnel); a WS that presents ?admin=<token>
 // matching it is treated as the host and may stop the whole session.
@@ -96,6 +104,50 @@ const wss = new WebSocketServer({ noServer: true });
 const clients = new Map(); // ws -> { name, color, tab }
 let counter = 0;
 
+// ---------- brute-force protection ----------
+// All state is global (there is one shared password), so the limits hold no
+// matter how many IPs or parallel connections an attacker uses. Two layers:
+//   1. A 5 second gap after every wrong attempt: at most one password
+//      evaluation per 5 seconds, server-wide.
+//   2. An escalating lockout ladder: 5 wrong attempts lock new attempts out
+//      for 5 minutes, then 3 attempts / 10 minutes, then 2 attempts /
+//      30 minutes (three rounds), then 1 attempt / hour for as long as the
+//      guessing continues. A correct login resets the ladder to the start.
+// While the gap or a lockout is active, attempts are rejected WITHOUT being
+// checked against the password, so a correct guess in that window buys
+// nothing. The cost: a legitimate user who connects during a lockout has to
+// wait it out too; the client shows the remaining time and retries.
+const ATTEMPT_GAP_MS = 5000;
+const LADDER = [
+  { attempts: 5, lockMin: 5 },
+  { attempts: 3, lockMin: 10 },
+  { attempts: 2, lockMin: 30 },
+  { attempts: 2, lockMin: 30 },
+  { attempts: 2, lockMin: 30 },
+  { attempts: 1, lockMin: 60 }, // final rung repeats forever
+];
+let rung = 0, fails = 0, lockedUntil = 0, gapUntil = 0;
+
+// Returns { ok:true } or { reason, retryMs, left?, lockMin? } for the client
+// to render: 'lockout' = ladder lockout running, 'throttle' = inside the
+// 5 second gap (attempt was NOT evaluated), 'wrong' = evaluated and rejected.
+function checkAuth(key) {
+  const now = Date.now();
+  if (now < lockedUntil) return { reason: 'lockout', retryMs: lockedUntil - now };
+  if (now < gapUntil)    return { reason: 'throttle', retryMs: gapUntil - now };
+  if (key === PASSWORD) { rung = 0; fails = 0; return { ok: true }; }
+  gapUntil = now + ATTEMPT_GAP_MS;
+  fails++;
+  const r = LADDER[Math.min(rung, LADDER.length - 1)];
+  const left = r.attempts - fails;
+  if (left <= 0) {
+    rung++; fails = 0;
+    lockedUntil = now + r.lockMin * 60000;
+    return { reason: 'lockout', retryMs: lockedUntil - now };
+  }
+  return { reason: 'wrong', retryMs: ATTEMPT_GAP_MS, left, lockMin: r.lockMin };
+}
+
 // ---------- keepalive heartbeat ----------
 // Cloudflare quick tunnels drop a proxied WebSocket that sees no frames for
 // ~100s, so an idle terminal (open but nobody typing) gets disconnected. We
@@ -125,7 +177,17 @@ function roster(){ return [...clients.values()].map(c => ({ name: c.name, color:
 
 server.on('upgrade', (req, socket, head) => {
   let url; try { url = new URL(req.url, 'http://localhost'); } catch { socket.destroy(); return; }
-  if (url.searchParams.get('key') !== PASSWORD) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
+  const auth = checkAuth(url.searchParams.get('key') || '');
+  if (!auth.ok) {
+    // Complete the handshake just long enough to say why (a bare 401 response
+    // is invisible to browser JS), then close the socket.
+    wss.handleUpgrade(req, socket, head, ws => {
+      try { ws.send(JSON.stringify({ type: 'denied', reason: auth.reason, retryMs: auth.retryMs, left: auth.left, lockMin: auth.lockMin })); } catch (e) {}
+      try { ws.close(); } catch (e) {}
+      setTimeout(() => { try { ws.terminate(); } catch (e) {} }, 1000);
+    });
+    return;
+  }
   wss.handleUpgrade(req, socket, head, ws => {
     ws.isAlive = true;
     ws.on('pong', () => { ws.isAlive = true; }); // heartbeat: proof the peer is alive
@@ -191,4 +253,6 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-server.listen(PORT, () => console.log(`philia terminal on http://localhost:${PORT} (cwd=${CWD})`));
+// Bind to loopback only: the tunnel (cloudflared) and the host's admin page
+// both connect via localhost, so nothing on the LAN needs direct access.
+server.listen(PORT, '127.0.0.1', () => console.log(`philia terminal on http://localhost:${PORT} (cwd=${CWD})`));
