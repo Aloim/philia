@@ -13,6 +13,9 @@ Under the hood it exposes a local terminal through a temporary [Cloudflare] tunn
 public link works from anywhere while the shell (and your AI agent) keeps running on your
 own PC.
 
+Philia is fully standalone, and it is also part of the [Phanes](https://github.com/Aloim/phanes)
+toolset and works very well with it (see [Companion tools](#companion-tools)).
+
 **Contents**
 
 - [What it's for](#what-its-for)
@@ -23,6 +26,7 @@ own PC.
 - [How to use](#how-to-use)
 - [Tailoring it to your agent](#tailoring-it-to-your-agent)
 - [How it works](#how-it-works)
+- [Companion tools](#companion-tools)
 - [Version](#version) · [License](#license) · [Contributing](#contributing)
 
 ---
@@ -158,6 +162,21 @@ your setup. The collaboration, chat, tabs, auth, and shutdown logic are all agen
 
 Nothing is hard-coded to a specific machine: the shared folder defaults to wherever the
 scripts live, and the password is generated per run.
+
+---
+
+## Companion tools
+
+Philia runs entirely on its own, but it is also part of the **Phanes toolset** and pairs
+very well with it:
+
+- **[Phanes](https://github.com/Aloim/phanes)** turns a repository into a fully wired,
+  opinionated multi-agent Claude Code environment in one command: agent roster,
+  workflows, documentation structure, and enforcement hooks. Share a Phanes-managed
+  project through Philia and every terminal tab opens inside that project, so everyone
+  you invite watches and drives the same agent team together, with the side chat for
+  coordinating. Philia has no dependency on Phanes; it simply shares whatever folder
+  you point it at.
 
 ---
 
