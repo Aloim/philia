@@ -7,3 +7,6 @@
 # Runtime artifacts, regenerated on every run
 /link.txt
 *.log
+
+# Internal Phanes session summaries (dev continuity notes, not for release)
+/documentation/Sessionsummaries/
